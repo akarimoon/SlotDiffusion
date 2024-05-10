@@ -15,6 +15,10 @@ data/COCO
 pretrained/*.pth
 pretrained/*.zip
 .idea/
+scripts/*.sh
+*.sh.*
+pretrained/*.pkl
+nerv/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
