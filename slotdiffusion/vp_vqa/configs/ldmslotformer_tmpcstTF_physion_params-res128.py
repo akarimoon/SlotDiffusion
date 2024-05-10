@@ -22,7 +22,7 @@ class SlotAttentionParams(BaseParams):
     # data settings, Physion
     dataset = 'physion_slots_training'
     data_root = './data/Physion'
-    slots_root = './data/Physion/slots/physion_training.pkl'
+    slots_root = './data/Physion/slots/tmpcstTF_physion_training.pkl'
     tasks = ['all']  # train on all 8 scenarios
     n_sample_frames = 15 + 10  # train on video clips of 6 frames
     frame_offset = 3
@@ -122,7 +122,7 @@ class SlotAttentionParams(BaseParams):
         ),
         conditioning_key='crossattn',  # 'concat'
         cond_stage_key='slots',
-        dec_ckp_path='./pretrained/savi_ldm_physion_params-res128.pth',
+        dec_ckp_path='./pretrained/savi_ldm_tmpcstTF_physion_params-res128.pth',
     )
 
     # loss configs

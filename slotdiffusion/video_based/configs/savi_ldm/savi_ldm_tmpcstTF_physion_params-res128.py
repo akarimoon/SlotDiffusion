@@ -4,62 +4,57 @@ from nerv.training import BaseParams
 class SlotAttentionParams(BaseParams):
     project = 'SlotDiffusion'
 
-    # training settings, from slot former
-    gpus = 4
-    max_epochs = 25  # ~450k steps
-    save_interval = 0.125  # save every 0.125 epoch
-    eval_interval = 2  # evaluate every 2 epochs
-    save_epoch_end = True  # save ckp at the end of every epoch
+    # training settings
+    gpus = 8
+    max_epochs = 10
+    save_interval = 0.05
+    eval_interval = 1
+    save_epoch_end = True
     n_samples = 8  # visualization after each epoch
 
-    # optimizer settings, from DM
+    # optimizer settings
     # Adam optimizer, Cosine decay with Warmup
     optimizer = 'Adam'
     lr = 1e-4
+    dec_lr = 2 * lr  # DDPM uses 2e-4, LDM even lower 1e-4
     weight_decay = 0.0
+    clip_grad = 0.05  # follow SAVi
     warmup_steps_pct = 0.05
 
-    # data settings, Physion
-    dataset = 'physion_slots_training'
+    # data settings
+    dataset = 'physion_training'
     data_root = './data/Physion'
-    slots_root = './data/Physion/slots/physion_training.pkl'
     tasks = ['all']  # train on all 8 scenarios
-    n_sample_frames = 15 + 10  # train on video clips of 6 frames
-    frame_offset = 3
+    n_sample_frames = 3
+    frame_offset = 1  # no offset
     video_len = 150  # take the first 150 frames of each video
-    train_batch_size = 128 // gpus
+    train_batch_size = 48 // gpus
     val_batch_size = train_batch_size * 2
-    num_workers = 8
+    num_workers = 2 * gpus
+    grad_accum_steps = 1  # LDM saves 4x memory
 
     # model configs
-    model = 'LDMSlotFormer'
-    resolution = (128, 128)
+    model = 'ConsistentSAViDiffusion'
+    resolution = (128, 128)  # SAVi uses 128x128
     img_ch = 3
-    input_frames = 15  # burn-in frames
+    input_frames = n_sample_frames
 
     # Slot Attention
     slot_size = 192
-    num_slots = 8
     slot_dict = dict(
-        num_slots=num_slots,
+        # follow SlotFormer
+        num_slots=8,
         slot_size=slot_size,
         slot_mlp_size=slot_size * 2,
         num_iterations=2,
     )
 
-    # rollout
-    rollout_dict = dict(
-        num_slots=num_slots,
-        slot_size=slot_size,
-        history_len=input_frames,
-        t_pe='sin',  # sine temporal P.E.
-        slots_pe='',  # no slots P.E.
-        # Transformer-related configs
-        d_model=256,
-        num_layers=12,
-        num_heads=8,
-        ffn_dim=256 * 4,
-        norm_first=True,
+    # CNN Encoder
+    enc_dict = dict(
+        resnet='resnet18',
+        use_layer4=False,  # True will downsample img by 8, False is 4
+        # will use GN
+        enc_out_channels=slot_size,
     )
 
     # LDM Decoder
@@ -102,7 +97,6 @@ class SlotAttentionParams(BaseParams):
         context_dim=slot_size,  # condition on slots
         n_embed=None,  # VQ codebook support for LDM
     )
-
     dec_dict = dict(
         resolution=tuple(res // 4 for res in resolution),
         vae_dict=vae_dict,
@@ -122,16 +116,28 @@ class SlotAttentionParams(BaseParams):
         ),
         conditioning_key='crossattn',  # 'concat'
         cond_stage_key='slots',
-        dec_ckp_path='./pretrained/savi_ldm_physion_params-res128.pth',
+    )
+
+    # Predictor
+    pred_dict = dict(
+        pred_type='transformer',
+        pred_rnn=False,
+        pred_norm_first=True,
+        pred_num_layers=2,
+        pred_num_heads=4,
+        pred_ffn_dim=slot_size * 4,
+        pred_sg_every=None,
+        const_type='attn'
     )
 
     # loss configs
     loss_dict = dict(
-        use_denoise_loss=False,
-        use_img_recon_loss=False,
-        rollout_len=n_sample_frames - rollout_dict['history_len'],
+        use_denoise_loss=True, 
+        use_consistency_loss=True,
     )
 
-    slot_recon_loss_w = 1.
     denoise_loss_w = 1.  # DM denoising loss weight
-    img_recon_loss_w = 1.
+    consistency_loss_w = 1.
+
+    # misc.
+    use_dpm = False  # DPM_Solver for faster sampling

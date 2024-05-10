@@ -5,7 +5,7 @@ class SlotAttentionParams(BaseParams):
     project = 'SlotDiffusion'
 
     # training settings
-    gpus = 2
+    gpus = 8
     max_epochs = 10
     save_interval = 0.05
     eval_interval = 1
@@ -30,7 +30,7 @@ class SlotAttentionParams(BaseParams):
     video_len = 150  # take the first 150 frames of each video
     train_batch_size = 48 // gpus
     val_batch_size = train_batch_size * 2
-    num_workers = 8
+    num_workers = 2 * gpus
     grad_accum_steps = 1  # LDM saves 4x memory
 
     # model configs
