@@ -92,7 +92,10 @@ def process_video(model):
         pdb.set_trace()
 
     # create soft link to weight dir
-    ln_path = os.path.join(os.path.dirname(args.weight), 'readout_slots.pkl')
+    ln_path = os.path.join(os.path.dirname(args.weight), 'rollout_readout_slots.pkl')
+    if 'tmpcstTF' in args.params:
+        ln_path = os.path.join(
+            os.path.dirname(args.weight), 'tmpcstTF_rollout_readout_slots.pkl')
     os.system(r'ln -s {} {}'.format(args.save_path, ln_path))
 
 
@@ -118,7 +121,10 @@ def process_test_video(model):
         pdb.set_trace()
 
     # create soft link to weight dir
-    ln_path = os.path.join(os.path.dirname(args.weight), 'test_slots.pkl')
+    ln_path = os.path.join(os.path.dirname(args.weight), 'rollout_test_slots.pkl')
+    if 'tmpcstTF' in args.params:
+        ln_path = os.path.join(
+            os.path.dirname(args.weight), 'tmpcstTF_rollout_test_slots.pkl')
     os.system(r'ln -s {} {}'.format(args.save_path, ln_path))
 
 
@@ -158,8 +164,7 @@ if __name__ == "__main__":
     # switch to $SUBSET slots
     params.dataset = f'physion_slots_{args.subset}'
     slot_name = f'{args.subset}_slots.pkl'
-    params.slots_root = os.path.join(
-        os.path.dirname(params.slots_root), slot_name)
+    params.slots_root = params.slots_root.replace('training', args.subset)
     params.loss_dict['use_img_recon_loss'] = False
 
     torch.backends.cudnn.benchmark = True

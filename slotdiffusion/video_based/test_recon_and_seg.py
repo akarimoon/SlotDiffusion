@@ -8,6 +8,7 @@ from PIL import Image
 
 import torch
 import lpips
+from torchvision.utils import save_image
 
 from nerv.training import BaseDataModule
 from nerv.utils import load_obj, dump_obj, save_video
@@ -22,20 +23,28 @@ vgg_fn = torch.nn.DataParallel(vgg_fn).cuda().eval()
 
 
 @torch.no_grad()
-def vp_imgs(model, gt_inputs, pred_len, model_type):
-    """Encode imgs to slots and decode them back to imgs."""
-    if model_type == 'LDMSlotFormer':
-        pred_slots = model.rollout(gt_inputs, pred_len)  # [B, pred_len, N, C]
-        B, T = pred_slots.shape[:2]
-        data_dict = {'slots': pred_slots.flatten(0, 1)}
-        pred_imgs = model.log_images(
-            data_dict,
-            use_dpm=True,
-            verbose=False,
-        )['samples'].unflatten(0, (B, T))
+def recon_imgs(model, gt_imgs, model_type):
+    """Encode videos to slots and decode them back to videos."""
+    data_dict = {'img': gt_imgs}
+    if model_type == 'SAVi':
+        out_dict = model(data_dict)
+        pred_imgs = out_dict['recon_img']
+    elif model_type == 'STEVE':
+        out_dict = model(data_dict)
+        pred_imgs = model(out_dict, recon_img=True, bs=24, verbose=False)
     else:
-        raise NotImplementedError(f'Unknown model type {model_type}')
-    return pred_imgs.cuda()
+        out_dict = model(
+            data_dict,
+            log_images=True,
+            use_ddim=False,
+            use_dpm=True,  # we use DPM-Solver by default
+            same_noise=True,
+            ret_intermed=False,
+            verbose=False,
+        )
+        pred_imgs = out_dict['samples']
+        pred_masks = out_dict['masks']  # [B, T, N(, 1), H, W]
+    return pred_imgs.cuda(), pred_masks.cuda()
 
 
 @torch.no_grad()
@@ -61,23 +70,23 @@ def eval_imgs(pred_imgs, gt_imgs):
 
 
 @torch.no_grad()
-def test_vp_imgs(model, data_dict, model_type, save_dir):
+def test_recon_imgs(model, data_dict, model_type, save_dir):
     """Encode images to slots and then decode back to images."""
     torch.cuda.empty_cache()
     data_idx = data_dict['data_idx'].cpu().numpy()  # [B]
+    # reconstruction evaluation can be very time-consuming
+    # so we save the results for every sample, so that we don't need to
+    #     recompute them when we re-start the evaluation next time
+    # load metrics if already computed
     metric_fn = os.path.join(save_dir, f'metrics/{data_idx[0]}_metric.pkl')
     if os.path.exists(metric_fn):
         recon_dict = load_obj(metric_fn)
     else:
-        gt_imgs = data_dict['img'][:, model.history_len:]
-        pred_len = model.rollout_len
-        if model_type == 'LDMSlotFormer':
-            gt_inputs = data_dict['slots'][:, :model.history_len]
-        else:
-            raise NotImplementedError(f'Unknown model type {model_type}')
-        pred_imgs = vp_imgs(model, gt_inputs, pred_len, model_type)
-        recon_dict = eval_imgs(pred_imgs, gt_imgs)
-        save_results(data_idx, pred_imgs, gt_imgs, recon_dict, save_dir)
+        gt_imgs = data_dict['img']
+        pred_imgs = recon_imgs(model, gt_imgs, model_type)
+        recon_dict = eval_imgs(pred_imgs, gt_imgs)  # np.array
+        # save metrics and images for computing FVD later
+        save_results(data_idx, None, None, recon_dict, save_dir)
     recon_dict = {k: torch.tensor(v) for k, v in recon_dict.items()}
     return recon_dict
 
@@ -88,7 +97,9 @@ def save_results(data_idx, pred_imgs, gt_imgs, metrics_dict, save_dir):
     metric_fn = os.path.join(save_dir, f'metrics/{data_idx[0]}_metric.pkl')
     os.makedirs(os.path.dirname(metric_fn), exist_ok=True)
     dump_obj(metrics_dict, metric_fn)
-    # videos to frames
+    if pred_imgs is None or gt_imgs is None:
+        return
+    # save videos as separate frames, required by FVD
     pred_imgs = to_rgb_from_tensor(pred_imgs).cpu().numpy()  # [B, T, 3, H, W]
     pred_imgs = np.round(pred_imgs * 255.).astype(np.uint8)
     gt_imgs = to_rgb_from_tensor(gt_imgs).cpu().numpy()  # [B, T, 3, H, W]
@@ -98,7 +109,7 @@ def save_results(data_idx, pred_imgs, gt_imgs, metrics_dict, save_dir):
         # [T, 3, H, W] -> [T, H, W, 3]
         pred_vid = pred_vid.transpose(0, 2, 3, 1)
         gt_vid = gt_vid.transpose(0, 2, 3, 1)
-        pred_dir = os.path.join(save_dir, 'pred_vids', str(idx))
+        pred_dir = os.path.join(save_dir, 'recon_vids', str(idx))
         gt_dir = os.path.join(save_dir, 'gt_vids', str(idx))
         os.makedirs(pred_dir, exist_ok=True)
         os.makedirs(gt_dir, exist_ok=True)
@@ -107,27 +118,28 @@ def save_results(data_idx, pred_imgs, gt_imgs, metrics_dict, save_dir):
             Image.fromarray(gt).save(os.path.join(gt_dir, f'{t}.png'))
 
 
-def save_vp_imgs(model, data_dict, model_type, save_dir, num_save=20):
+@torch.no_grad()
+def save_recon_imgs(model, data_dict, model_type, save_dir):
     """Save the recon video instead of computing metrics."""
-    gt_imgs = data_dict[
-        'img'][:, model.history_len:]  # take only frames need to predict
-    pred_len = model.rollout_len
+    gt_imgs = data_dict['img']
     # fake a metric_dict for compatibility
     recon_dict = {'mse': torch.tensor(0.).type_as(gt_imgs)}
-    pred_imgs = vp_imgs(model, data_dict['slots'][:, :model.history_len],
-                        pred_len, model_type)  # taking gt slots for future rolling out.
-    pred_imgs = to_rgb_from_tensor(pred_imgs).cpu().numpy()  # [B, T, 3, H, W]
-    gt_imgs = to_rgb_from_tensor(gt_imgs).cpu().numpy()  # [B, T, 3, H, W]
+    pred_imgs, pred_masks = recon_imgs(model, gt_imgs, model_type)
+    pred_imgs = to_rgb_from_tensor(pred_imgs) # [B, T, 3, H, W]
+    gt_imgs = to_rgb_from_tensor(gt_imgs) # [B, T, 3, H, W]
+
     data_idx = data_dict['data_idx']  # [B]
-    for i, (pred, gt) in enumerate(zip(pred_imgs, gt_imgs)):
-        idx = data_idx[i].cpu().item()
-        save_video(pred, os.path.join(save_dir, f'{idx}_pred.mp4'), fps=8)
-        save_video(gt, os.path.join(save_dir, f'{idx}_gt.mp4'), fps=8)
-        if i >= num_save:
-            break
+    for i, (pred, gt, mask) in enumerate(zip(pred_imgs, gt_imgs, pred_masks)):
+        idx = data_idx[i].item()
+        video = torch.cat([gt.unsqueeze(1), pred.unsqueeze(1), mask.unsqueeze(2).repeat(1, 1, 3, 1, 1)], dim=1).cpu().detach()
+        video = video[::10]
+        t = video.shape[0]
+        video = video.permute(1, 0, 2, 3, 4).flatten(0, 1)
+        save_image(video, os.path.join(save_dir, f'{idx}_recon_with_slots.png'), nrow=t)
+
     # exit program when saving enough many samples
-    # if len(os.listdir(save_dir)) > 200:
-    #     exit(-1)
+    if len(os.listdir(save_dir)) > 200:
+        exit(-1)
     return recon_dict
 
 
@@ -140,7 +152,12 @@ def main(params):
     model = build_model(params)
     model.load_weight(args.weight)
     print(f'Loading weight from {args.weight}')
-    model.testing = True
+
+    # for SlotDiffusion and STEVE, we only want slots
+    # and then we will call additional functions to reconstruct the imgs
+    # but for SAVi the slot2img decoding is already included in the forward pass
+    if params.model != 'SAVi':
+        model.testing = True
 
     # DDP to speed up testing
     method = build_method(
@@ -154,54 +171,44 @@ def main(params):
         val_only=True,
     )
 
-    save_root = os.path.dirname(args.weight) if params.save_root == '' else params.save_root
-    if args.save_video:
-        save_dir = os.path.join(save_root, 'vis')
+    if args.save_video:  # save to mp4 for visualization
+        save_dir = os.path.join(os.path.dirname(args.weight), 'vis')
         if args.local_rank == 0:
             os.makedirs(save_dir, exist_ok=True)
         method._test_step = lambda model, batch_data: \
-            save_vp_imgs(model, batch_data, model_type=params.model,
-                         save_dir=save_dir, num_save=5) # save 5*bs samples
-    else:
-        save_dir = os.path.join(save_root, 'eval')
+            save_recon_imgs(model, batch_data, model_type=params.model,
+                            save_dir=save_dir)
+    else:  # save to individual frames for FVD computation
+        save_dir = os.path.join(os.path.dirname(args.weight), 'eval')
         if args.local_rank == 0:
             os.makedirs(save_dir, exist_ok=True)
         method._test_step = lambda model, batch_data: \
-            test_vp_imgs(model, batch_data, model_type=params.model,
-                         save_dir=save_dir)
+            test_recon_imgs(model, batch_data, model_type=params.model,
+                            save_dir=save_dir)
     method.test()
     print(f'{os.path.basename(args.params)} testing done')
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Test video prediction')
+    parser = argparse.ArgumentParser(description='Test video reconstruction')
     parser.add_argument('--params', type=str, required=True)
     parser.add_argument('--weight', type=str, default='', help='load weight')
     parser.add_argument('--save_video', action='store_true', help='vis videos')
     parser.add_argument('--bs', type=int, default=1)
     parser.add_argument('--local_rank', type=int, default=0)
-    parser.add_argument('--save_root', type=str, default='')
+    parser.add_argument('--local-rank', type=int, default=0)
     args = parser.parse_args()
 
     if args.params.endswith('.py'):
         args.params = args.params[:-3]
     sys.path.append(os.path.dirname(args.params))
-
     params = importlib.import_module(os.path.basename(args.params))
     params = params.SlotAttentionParams()
+    assert params.model in ['SAVi', 'SAViDiffusion', 'ConsistentSAViDiffusion', 'STEVE'], \
+        f'Unknown model {params.model}'
 
-    params.n_sample_frames = params.video_len // params.frame_offset
-    if params.model == 'LDMSlotFormer':
-        params.loss_dict['rollout_len'] = \
-            params.n_sample_frames - params.rollout_dict['history_len']
-        params.loss_dict['use_img_recon_loss'] = True
-        params.dataset = 'physion_slots_test'
-        params.slots_root = params.slots_root.replace('training', 'test')
-    else:
-        raise NotImplementedError(f'Unknown model {params.model}')
-    params.load_img = True
-
-    params.save_root = args.save_root
+    # load full video for eval
+    params.n_sample_frames = params.video_len  # entire video
 
     # adjust bs & GPU settings
     params.val_batch_size = args.bs  # DDP

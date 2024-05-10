@@ -70,6 +70,9 @@ def process_video(model):
     if 'physion' in args.params:
         ln_path = os.path.join(
             os.path.dirname(args.weight), f'{args.subset}_slots.pkl')
+        if 'tmpcstTF' in args.params:
+            ln_path = os.path.join(
+                os.path.dirname(args.weight), f'tmpcstTF_{args.subset}_slots.pkl')
     else:
         ln_path = os.path.join(os.path.dirname(args.weight), 'slots.pkl')
     os.system(r'ln -s {} {}'.format(args.save_path, ln_path))
@@ -98,6 +101,8 @@ def process_test_video(model):
 
     # create soft link to the weight dir
     ln_path = os.path.join(os.path.dirname(args.weight), 'test_slots.pkl')
+    if 'tmpcstTF' in args.params:
+        ln_path = os.path.join(os.path.dirname(args.weight), f'tmpcstTF_test_slots.pkl')
     os.system(r'ln -s {} {}'.format(args.save_path, ln_path))
 
 

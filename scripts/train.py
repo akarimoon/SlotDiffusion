@@ -31,9 +31,9 @@ def main(params):
 
     # create checkpoint dir
     exp_name = os.path.basename(args.params)
-    ckp_path = os.path.join('checkpoint', exp_name, 'models')
+    ckp_path = os.path.join('./checkpoint/', exp_name, 'models' if args.name_suffix == '' else f'models_{args.name_suffix}')
     if args.local_rank == 0:
-        mkdir_or_exist(os.path.dirname(ckp_path))
+        # mkdir_or_exist(os.path.dirname(ckp_path))
 
         # on clusters, quota under user dir is usually limited
         # soft link to save the weights in temp space for checkpointing
@@ -60,6 +60,7 @@ def main(params):
             name=logger_name,
             id=logger_id,
             dir=ckp_path,
+            mode=args.mode
         )
 
     method = build_method(
@@ -70,10 +71,11 @@ def main(params):
         local_rank=args.local_rank,
         use_ddp=args.ddp,
         use_fp16=args.fp16,
+        silent=args.silent
     )
 
     method.fit(
-        resume_from=args.weight, san_check_val_step=params.san_check_val_step)
+        resume_from=args.weight, san_check_val_step=params.san_check_val_step, skip_load=args.scratch)
 
 
 if __name__ == "__main__":
@@ -89,7 +91,10 @@ if __name__ == "__main__":
     parser.add_argument('--ddp', action='store_true', help='DDP training')
     parser.add_argument('--cudnn', action='store_true', help='cudnn benchmark')
     parser.add_argument('--local_rank', type=int, default=0)
-    parser.add_argument('--local-rank', type=int, default=0)
+    parser.add_argument('--mode', type=str, default='online')
+    parser.add_argument('--scratch', action='store_true', help='start training from scratch')
+    parser.add_argument('--silent', action='store_true', help='silent mode')
+    parser.add_argument('--name_suffix', type=str, default='')
     args = parser.parse_args()
 
     # import `build_dataset/model/method` function according to `args.task`

@@ -196,7 +196,7 @@ if __name__ == "__main__":
     sys.path.append(os.path.dirname(args.params))
     params = importlib.import_module(os.path.basename(args.params))
     params = params.SlotAttentionParams()
-    assert params.model in ['SAVi', 'SAViDiffusion', 'STEVE'], \
+    assert params.model in ['SAVi', 'SAViDiffusion', 'ConsistentSAViDiffusion', 'STEVE'], \
         f'Unknown model {params.model}'
 
     # load full video for eval
