@@ -327,6 +327,8 @@ class SAVi(BaseModel):
                 [self.slot_size, self.slot_size * 2, self.slot_size],
                 norm_first=self.pred_dict['pred_norm_first'],
             )
+        elif pred_type == 'grucell':
+            self.predictor = nn.GRUCell(self.slot_size, self.slot_size)
         else:
             self.predictor = TransformerPredictor(
                 self.slot_size,

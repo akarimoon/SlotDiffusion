@@ -18,6 +18,8 @@ def build_method(**kwargs):
     params = kwargs['params']
     if params.model in ['SAVi', 'STEVE', 'SAViDiffusion']:
         return eval(f'{params.model}Method')(**kwargs)
+    elif params.model in ['ConsistentSAViDiffusion']:
+        return eval('SAViDiffusionMethod')(**kwargs)
     elif 'VAE' in params.model:
         return VAEMethod(**kwargs)
     else:
