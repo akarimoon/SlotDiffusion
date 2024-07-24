@@ -35,7 +35,7 @@ class SlotAttentionParams(BaseParams):
     grad_accum_steps = 1  # LDM saves 4x memory
 
     # model configs
-    model = 'SAViDiffusion'
+    model = 'ConsistentViTSAViDiffusion'
     resolution = (128, 128)  # SAVi uses 128x128
     img_ch = 3
     input_frames = n_sample_frames
@@ -52,11 +52,16 @@ class SlotAttentionParams(BaseParams):
 
     # CNN Encoder
     enc_dict = dict(
-        resnet='resnet18',
-        use_layer4=False,  # True will downsample img by 8, False is 4
-        # will use GN
+        vit_model_name="samvit_base_patch16",
+        # vit_model_name="vit_small_patch16_224_dino",
+        # vit_model_name="vit_small_patch14_dinov2.lvd142m",
+        vit_use_pretrained=True,
+        vit_freeze=True,
+        vit_feature_level=12,
+        vit_num_patches=64, # res 64
+        # vit_num_patches=196, # res 224
+        vit_out_dim=768,
         enc_out_channels=slot_size,
-        replace_stride_with_dilation=[False, False, False],
     )
 
     # LDM Decoder
@@ -129,12 +134,17 @@ class SlotAttentionParams(BaseParams):
         pred_num_heads=4,
         pred_ffn_dim=slot_size * 4,
         pred_sg_every=None,
+        const_type='attn'
     )
 
     # loss configs
-    loss_dict = dict(use_denoise_loss=True, )
+    loss_dict = dict(
+        use_denoise_loss=True, 
+        use_consistency_loss=True,
+    )
 
     denoise_loss_w = 1.  # DM denoising loss weight
+    consistency_loss_w = 1.
 
     # misc.
     use_dpm = False  # DPM_Solver for faster sampling

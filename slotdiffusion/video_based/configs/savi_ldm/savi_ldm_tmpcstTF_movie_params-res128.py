@@ -5,7 +5,7 @@ class SlotAttentionParams(BaseParams):
     project = 'SlotDiffusion'
 
     # training settings
-    gpus = 1
+    gpus = 4
     max_epochs = 30
     save_interval = 0.1
     eval_interval = 1
@@ -35,7 +35,7 @@ class SlotAttentionParams(BaseParams):
     grad_accum_steps = 1  # LDM saves 4x memory
 
     # model configs
-    model = 'SAViDiffusion'
+    model = 'ConsistentSAViDiffusion'
     resolution = (128, 128)  # SAVi uses 128x128
     img_ch = 3
     input_frames = n_sample_frames
@@ -79,7 +79,7 @@ class SlotAttentionParams(BaseParams):
             embed_dim=latent_ch,
             percept_loss_w=1.0,
         ),
-        vqvae_ckp_path='./pretrained/vqvae_movie_params-res128.pth',
+        vqvae_ckp_path='./pretrained/pretrained/vqvae_movie_params-res128.pth',
     )
 
     unet_dict = dict(
@@ -128,6 +128,7 @@ class SlotAttentionParams(BaseParams):
         pred_num_layers=2,
         pred_num_heads=4,
         pred_ffn_dim=slot_size * 4,
+        pred_sg_every=None,
         const_type='attn'
     )
 
