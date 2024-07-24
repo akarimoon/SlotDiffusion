@@ -7,6 +7,7 @@ import numpy as np
 from PIL import Image
 
 import torch
+import torchvision.utils as vutils
 import lpips
 
 from nerv.training import BaseDataModule
@@ -22,17 +23,46 @@ vgg_fn = torch.nn.DataParallel(vgg_fn).cuda().eval()
 
 
 @torch.no_grad()
+def _save_as_grid(gt, rollout_combined, masks, idx, prefix='', vis_every=5):
+    scale = 1.
+    # combine images in a way so we can display all outputs in one grid
+    # output rescaled to be between 0 and 1
+    out = (
+        torch.cat(
+            [
+                gt.unsqueeze(1),  # original images
+                rollout_combined.unsqueeze(1).to(gt.device),  # reconstructions
+                # masks.repeat(1,1,3,1,1), # masks
+                gt.unsqueeze(1) * masks.unsqueeze(2).to(gt.device) #+ (1. - masks) * scale,  # each slot
+            ],
+            dim=1,
+        )).mul(0.5).add(0.5).clamp(0,1)  # [T, num_slots+2, 3, H, W]
+    # out = out.permute(1, 0, 2, 3, 4)
+    out = out[::vis_every]
+    t = out.shape[1]
+    out = out.flatten(0, 1) # [(num_slots+2)*T, 3, H, W]
+    vutils.save_image(out, f'/project/SlotDiffusion/checkpoint/outputs/{prefix}_{idx}.png', nrow=t)
+
+
+def make_one_hot(logits, dim=-1):
+    index = logits.argmax(dim, keepdim=True)
+    one_hot_label = torch.zeros_like(logits).scatter_(dim, index, 1.)
+    return one_hot_label
+
+
+@torch.no_grad()
 def recon_imgs(model, gt_imgs, model_type):
     """Encode videos to slots and decode them back to videos."""
     data_dict = {'img': gt_imgs}
     if model_type == 'SAVi':
         out_dict = model(data_dict)
         pred_imgs = out_dict['recon_img']
+        masks = out_dict['masks']
     elif model_type == 'STEVE':
         out_dict = model(data_dict)
         pred_imgs = model(out_dict, recon_img=True, bs=24, verbose=False)
     else:
-        pred_imgs = model(
+        out_dict = model(
             data_dict,
             log_images=True,
             use_ddim=False,
@@ -40,8 +70,10 @@ def recon_imgs(model, gt_imgs, model_type):
             same_noise=True,
             ret_intermed=False,
             verbose=False,
-        )['samples']
-    return pred_imgs.cuda()
+        )
+        pred_imgs = out_dict['samples']
+        masks = out_dict['masks']
+    return pred_imgs.cuda(), masks.cuda()
 
 
 @torch.no_grad()
@@ -80,7 +112,7 @@ def test_recon_imgs(model, data_dict, model_type, save_dir):
         recon_dict = load_obj(metric_fn)
     else:
         gt_imgs = data_dict['img']
-        pred_imgs = recon_imgs(model, gt_imgs, model_type)
+        pred_imgs, masks = recon_imgs(model, gt_imgs, model_type)
         recon_dict = eval_imgs(pred_imgs, gt_imgs)  # np.array
         # save metrics and images for computing FVD later
         save_results(data_idx, None, None, recon_dict, save_dir)
@@ -118,10 +150,16 @@ def save_results(data_idx, pred_imgs, gt_imgs, metrics_dict, save_dir):
 @torch.no_grad()
 def save_recon_imgs(model, data_dict, model_type, save_dir):
     """Save the recon video instead of computing metrics."""
+    tmpcst = '_tmpcst' if 'Consistent' in params.model else ''
     gt_imgs = data_dict['img']
     # fake a metric_dict for compatibility
     recon_dict = {'mse': torch.tensor(0.).type_as(gt_imgs)}
-    pred_imgs = recon_imgs(model, gt_imgs, model_type)
+    pred_imgs, masks = recon_imgs(model, gt_imgs, model_type)
+
+    hard_masks = make_one_hot(masks[0], dim=1).type_as(masks)
+    # save the recon video
+    _save_as_grid(gt_imgs[0], pred_imgs[0], hard_masks, data_dict['data_idx'].item(), prefix=f'recon{tmpcst}')
+
     pred_imgs = to_rgb_from_tensor(pred_imgs).cpu().numpy()  # [B, T, 3, H, W]
     gt_imgs = to_rgb_from_tensor(gt_imgs).cpu().numpy()  # [B, T, 3, H, W]
     data_idx = data_dict['data_idx']  # [B]
@@ -206,6 +244,8 @@ if __name__ == "__main__":
     params.val_batch_size = args.bs  # DDP
     params.gpus = torch.cuda.device_count()
     params.ddp = (params.gpus > 1)
+
+    params.tasks = ["Contain"]
 
     torch.backends.cudnn.benchmark = True
     main(params)
