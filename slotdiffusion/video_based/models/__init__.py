@@ -1,5 +1,6 @@
 from .savi import SAVi
 from .savi_diffusion import SAViDiffusion, ConsistentSAViDiffusion
+from .vit_savi_diffusion import ConsistentViTSAViDiffusion
 from .steve import build_model as build_steve_model
 from .vqvae import VQVAE, VQVAEWrapper
 
@@ -11,7 +12,7 @@ from .steve import cosine_anneal, gumbel_softmax, make_one_hot
 
 def build_model(params):
     """Build model."""
-    if params.model in ['SAVi', 'SAViDiffusion', 'ConsistentSAViDiffusion']:
+    if params.model in ['SAVi', 'SAViDiffusion', 'ConsistentSAViDiffusion', 'ConsistentViTSAViDiffusion']:
         model = eval(params.model)(
             resolution=params.resolution,
             clip_len=params.input_frames,
